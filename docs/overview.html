@@ -1,0 +1,1434 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A standalone overview of flow v0: architecture, data flows, execution stages, and recovery."
+    />
+    <title>flow — System overview</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --ink: var(--foreground, #202a35);
+        --soft: var(--muted-foreground, #596575);
+        --line: var(--border, #d8dfe5);
+        --panel: var(--card, #f5f7f8);
+        --blue: #2667ac;
+        --green: #23765e;
+        --amber: #926014;
+        --radius: 12px;
+        --font-sans:
+          system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ink: var(--foreground, #e4eaf1);
+          --soft: var(--muted-foreground, #a6b3c2);
+          --line: var(--border, #354353);
+          --panel: var(--card, #18232e);
+          --blue: #84b8f2;
+          --green: #83cdb6;
+          --amber: #e4bd79;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        background: transparent;
+        color: var(--ink);
+        font-family: var(--font-sans);
+        font-size: 15px;
+        line-height: 1.6;
+      }
+      main {
+        max-width: 1060px;
+        margin: 0 auto;
+        padding: 24px 0 36px;
+      }
+      html {
+        background: var(--background, light-dark(#ffffff, #111a24));
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: clamp(32px, 6vw, 48px);
+        letter-spacing: -0.055em;
+        font-weight: 750;
+        line-height: 1.15;
+      }
+      h2 {
+        font-size: 25px;
+        letter-spacing: -0.035em;
+        line-height: 1.25;
+      }
+      h3 {
+        font-size: 16px;
+        line-height: 1.4;
+      }
+      p {
+        margin-top: 9px;
+      }
+      a {
+        color: var(--blue);
+      }
+      code {
+        font: 0.87em var(--font-mono);
+        overflow-wrap: anywhere;
+      }
+      pre {
+        padding: 18px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        overflow: auto;
+        font-size: 12px;
+        line-height: 1.7;
+      }
+      pre code {
+        font-size: inherit;
+      }
+      ul,
+      ol {
+        padding-left: 21px;
+        margin: 10px 0 0;
+      }
+      li + li {
+        margin-top: 6px;
+      }
+      .eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        font-size: 10px;
+        font-weight: 750;
+        color: var(--soft);
+      }
+      .lede {
+        max-width: 700px;
+        color: var(--soft);
+        font-size: 17px;
+      }
+      .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 20px 0 24px;
+      }
+      .tag {
+        border: 1px solid var(--line);
+        border-radius: 99px;
+        padding: 4px 11px;
+        font-size: 11px;
+        font-weight: 650;
+      }
+      .tabs {
+        display: flex;
+        gap: 4px;
+        border-bottom: 1px solid var(--line);
+        margin: 0 0 28px;
+        overflow: auto;
+      }
+      .tabs button {
+        border: 0;
+        border-bottom: 3px solid transparent;
+        background: transparent;
+        color: var(--soft);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 650;
+        padding: 12px 15px;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+      .tabs button[aria-selected="true"] {
+        color: var(--blue);
+        border-bottom-color: var(--blue);
+      }
+      button:focus-visible,
+      a:focus-visible {
+        outline: 3px solid var(--blue);
+        outline-offset: 3px;
+      }
+      .section-intro {
+        color: var(--soft);
+        max-width: 740px;
+        margin-bottom: 22px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 20px;
+        background: var(--panel);
+        min-width: 0;
+      }
+      .card p,
+      .card li {
+        font-size: 13px;
+      }
+      .card .eyebrow {
+        margin-bottom: 7px;
+      }
+      .note {
+        border-left: 3px solid var(--green);
+        padding: 12px 18px;
+        margin-top: 20px;
+        background: var(--panel);
+        border-radius: 0 var(--radius) var(--radius) 0;
+        font-size: 13px;
+      }
+      .note.warning {
+        border-left-color: var(--amber);
+      }
+      .subsection {
+        margin-top: 30px;
+      }
+      .arch {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1.2fr) 28px minmax(
+            0,
+            1fr
+          );
+        align-items: stretch;
+        margin: 22px 0 16px;
+        gap: 0;
+      }
+      .arch .card {
+        padding: 17px;
+      }
+      .arch .center {
+        border: 2px solid var(--blue);
+      }
+      .connector {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--blue);
+        font-size: 22px;
+      }
+      .arch small {
+        display: block;
+        color: var(--soft);
+        font-size: 11px;
+        margin-top: 10px;
+      }
+      .store {
+        display: flex;
+        gap: 20px;
+        align-items: center;
+        border: 1px dashed var(--line);
+        border-radius: var(--radius);
+        padding: 16px 20px;
+      }
+      .store .symbol {
+        font-size: 24px;
+        color: var(--green);
+        font-weight: 700;
+      }
+      .store p {
+        font-size: 13px;
+        margin: 0;
+        color: var(--soft);
+      }
+      .strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 22px;
+      }
+      .strip strong {
+        font-size: 13px;
+      }
+      .strip p {
+        font-size: 12px;
+        color: var(--soft);
+        margin-top: 5px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 32px minmax(0, 1fr);
+        gap: 12px;
+        padding: 18px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .row:last-child {
+        border: 0;
+      }
+      .number {
+        color: var(--blue);
+        font: 600 13px var(--font-mono);
+        padding-top: 4px;
+      }
+      .path {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin: 10px 0;
+      }
+      .node {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 5px 10px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .arrow {
+        color: var(--soft);
+      }
+      .row p,
+      .row li {
+        font-size: 13px;
+        color: var(--soft);
+      }
+      .workflow {
+        display: grid;
+        grid-template-columns: minmax(150px, 0.85fr) minmax(0, 2fr);
+        gap: 18px;
+        margin-top: 22px;
+      }
+      .steps {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .step {
+        display: flex;
+        text-align: left;
+        gap: 10px;
+        padding: 11px 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--soft);
+        background: transparent;
+        font: inherit;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .step span {
+        font: 12px var(--font-mono);
+        color: var(--soft);
+      }
+      .step[aria-pressed="true"] {
+        border-color: var(--blue);
+        color: var(--blue);
+        background: var(--panel);
+        font-weight: 700;
+      }
+      .detail {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 24px;
+        background: var(--panel);
+      }
+      .detail h3 {
+        font-size: 21px;
+        margin: 8px 0 14px;
+      }
+      .detail h4 {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--soft);
+        margin: 22px 0 8px;
+      }
+      .detail li {
+        font-size: 14px;
+      }
+      .cycle {
+        border: 1px dashed var(--line);
+        padding: 12px 16px;
+        border-radius: 8px;
+        margin-top: 16px;
+        font-size: 13px;
+      }
+      .outcomes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 14px 0;
+      }
+      .outcomes code {
+        border: 1px solid var(--line);
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 11px;
+      }
+      .table-wrap {
+        overflow-x: auto;
+        margin-top: 18px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+        font-size: 12px;
+      }
+      th {
+        color: var(--soft);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-size: 10px;
+      }
+      td,
+      th {
+        padding: 13px 10px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      td:first-child {
+        font-weight: 650;
+      }
+      details {
+        border-bottom: 1px solid var(--line);
+        padding: 15px 0;
+      }
+      summary {
+        font-size: 14px;
+        font-weight: 650;
+        cursor: pointer;
+      }
+      details p,
+      details li {
+        font-size: 13px;
+        color: var(--soft);
+      }
+      footer {
+        margin-top: 32px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px;
+        color: var(--soft);
+        font-size: 11px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      .nojs {
+        border: 1px solid var(--line);
+        padding: 12px;
+      }
+      .print-stages {
+        display: none;
+      }
+      @media (max-width: 620px) {
+        .tabs {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        main {
+          padding-top: 16px;
+        }
+        .grid,
+        .strip {
+          grid-template-columns: 1fr;
+        }
+        .arch {
+          grid-template-columns: 1fr;
+        }
+        .connector {
+          height: 32px;
+          transform: rotate(90deg);
+        }
+        .workflow {
+          grid-template-columns: 1fr;
+        }
+        .steps {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .detail {
+          padding: 18px;
+        }
+        .tabs button {
+          padding: 11px 10px;
+          font-size: 12px;
+        }
+        .store {
+          align-items: flex-start;
+          gap: 12px;
+        }
+        .lede {
+          font-size: 15px;
+        }
+        .card {
+          padding: 17px;
+        }
+      }
+      @media print {
+        html,
+        body {
+          color: #17212b !important;
+          background: white !important;
+          font-size: 11px;
+        }
+        .tabs,
+        .steps,
+        .detail,
+        footer .print-control {
+          display: none !important;
+        }
+        [role="tabpanel"][hidden] {
+          display: block !important;
+        }
+        .print-stages {
+          display: block;
+        }
+        main {
+          max-width: none;
+          padding: 0;
+        }
+        section[role="tabpanel"] {
+          break-before: page;
+          margin-top: 24px;
+        }
+        section[role="tabpanel"]:first-of-type {
+          break-before: auto;
+        }
+        .card,
+        .note,
+        .detail,
+        pre {
+          background: #f5f7f8 !important;
+        }
+        .card,
+        details,
+        .row {
+          break-inside: avoid;
+        }
+        details::details-content {
+          display: block;
+        }
+        h2,
+        h3 {
+          break-after: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">Technical overview · v0</div>
+        <h1>flow</h1>
+        <p class="lede">
+          An approved feature document becomes an implementation, an independent
+          review, and a draft pull request.
+        </p>
+        <div class="tags">
+          <span class="tag">Local CLI</span
+          ><span class="tag">One active feature per repository</span
+          ><span class="tag">T3 execution backend</span
+          ><span class="tag">No automatic merge</span>
+        </div>
+      </header>
+      <nav class="tabs" role="tablist" aria-label="Overview sections">
+        <button
+          role="tab"
+          id="tab-system"
+          aria-controls="system"
+          aria-selected="true"
+        >
+          01 · System
+        </button>
+        <button
+          role="tab"
+          id="tab-data"
+          aria-controls="data"
+          aria-selected="false"
+          tabindex="-1"
+        >
+          02 · Data flows
+        </button>
+        <button
+          role="tab"
+          id="tab-workflow"
+          aria-controls="workflow"
+          aria-selected="false"
+          tabindex="-1"
+        >
+          03 · Workflow
+        </button>
+        <button
+          role="tab"
+          id="tab-recovery"
+          aria-controls="recovery"
+          aria-selected="false"
+          tabindex="-1"
+        >
+          04 · Recovery
+        </button>
+      </nav>
+      <noscript
+        ><p class="nojs">
+          JavaScript is disabled. All overview sections appear below.
+        </p></noscript
+      >
+
+      <section id="system" role="tabpanel" aria-labelledby="tab-system">
+        <h2>Who owns each decision?</h2>
+        <p class="section-intro">
+          The person approves scope. flow controls stage transitions. T3 runs
+          implementation and review agents in a dedicated Git worktree.
+        </p>
+        <div
+          class="arch"
+          aria-label="Architecture: approved documents feed flow; flow exchanges tasks and results with T3."
+        >
+          <div class="card">
+            <div class="eyebrow">Human intent</div>
+            <h3>Feature documents</h3>
+            <ul>
+              <li>Outcome and requirements.</li>
+              <li>Acceptance criteria.</li>
+              <li>Dependencies and optional group.</li>
+            </ul>
+            <small
+              ><code>features/*.md</code><br /><code
+                >draft · ready · cancelled</code
+              ></small
+            >
+          </div>
+          <div class="connector" aria-hidden="true">→</div>
+          <div class="card center">
+            <div class="eyebrow">Workflow authority</div>
+            <h3>flow runner</h3>
+            <ul>
+              <li>Check approval and dependencies.</li>
+              <li>Advance each stage.</li>
+              <li>Require review and validation.</li>
+              <li>Recover interrupted work.</li>
+            </ul>
+            <small>TypeScript · Node 24+ · SQLite · Zod</small>
+          </div>
+          <div class="connector" aria-hidden="true">⇄</div>
+          <div class="card">
+            <div class="eyebrow">Execution backend</div>
+            <h3>T3 Code</h3>
+            <ul>
+              <li>Run approved implementation tasks.</li>
+              <li>Create the implementation worktree.</li>
+              <li>Run implementation and review threads.</li>
+            </ul>
+            <small
+              >Supported MCP tools<br />Independent conversation for each
+              review</small
+            >
+          </div>
+        </div>
+        <div class="store">
+          <span class="symbol" aria-hidden="true">↕</span>
+          <div>
+            <h3>Local durable state</h3>
+            <p>
+              flow saves approvals, jobs, thread handles, candidate trees,
+              review results, validation results, and publication progress.
+            </p>
+            <code>.flow/state.sqlite</code>
+          </div>
+        </div>
+        <div class="strip">
+          <div>
+            <strong>Git + GitHub CLI</strong>
+            <p>
+              Fetch the base. Identify the candidate. Commit, push, and create
+              one draft PR.
+            </p>
+          </div>
+          <div>
+            <strong>Repository validation</strong>
+            <p>
+              Run configured command arrays in the final worktree. Record exit
+              codes and the tested tree.
+            </p>
+          </div>
+          <div>
+            <strong>JSON export</strong>
+            <p>
+              Combine feature metadata, saved progress, and current PR state for
+              future roadmap tools.
+            </p>
+          </div>
+        </div>
+        <div class="note">
+          <strong>Two separate completion events.</strong>
+          <code>pr_open</code> means a PR exists. A feature is delivered only
+          when its PR is confirmed merged.
+        </div>
+        <div class="subsection">
+          <h3>Execution boundary</h3>
+          <p>
+            Drafting invokes Codex or Claude directly. The CLI selects the
+            provider. Material questions stay in the draft for human review.
+          </p>
+          <p class="section-intro">
+            The runner uses a small executor interface. T3-specific transport
+            and thread handling stay in the adapter.
+          </p>
+          <div class="grid">
+            <div class="card">
+              <h3>Implemented now</h3>
+              <ul>
+                <li>Direct drafting with Codex or Claude CLI.</li>
+                <li>Manual CLI invocation.</li>
+                <li>T3 over MCP with OAuth.</li>
+                <li>Local repositories and worktrees.</li>
+                <li>Draft PR creation through Git and <code>gh</code>.</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>Deferred</h3>
+              <ul>
+                <li>Codex and Claude implementation/review adapters.</li>
+                <li>Parallel features and PR stacks.</li>
+                <li>Watchers, daemons, and scheduling.</li>
+                <li>Automatic merging and roadmap UI.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="data" role="tabpanel" aria-labelledby="tab-data">
+        <h2>What moves through the system?</h2>
+        <p class="section-intro">
+          Documents store intent. SQLite stores execution state. Git tree IDs
+          connect review and validation to the exact candidate contents.
+        </p>
+        <div class="row">
+          <span class="number">01</span>
+          <div>
+            <h3>Draft and approve</h3>
+            <div class="path">
+              <span class="node">User request</span><span class="arrow">→</span
+              ><span class="node">Local Codex / Claude CLI</span
+              ><span class="arrow">→</span
+              ><span class="node">Draft Markdown</span
+              ><span class="arrow">→</span
+              ><span class="node">Human approval</span>
+            </div>
+            <ul>
+              <li>
+                <code>flow new</code> preserves the request and validates
+                generated Markdown.
+              </li>
+              <li>
+                <code>flow ready</code> records approval for the exact document
+                bytes.
+              </li>
+              <li>Open questions require explicit acknowledgment.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="row">
+          <span class="number">02</span>
+          <div>
+            <h3>Freeze scope and launch</h3>
+            <div class="path">
+              <span class="node">Approved document + config</span
+              ><span class="arrow">→</span
+              ><span class="node">Saved job snapshot</span
+              ><span class="arrow">→</span
+              ><span class="node">T3-owned worktree</span>
+            </div>
+            <ul>
+              <li>
+                flow checks the current approval hash and prerequisite PR
+                states.
+              </li>
+              <li>flow fetches the configured remote base branch.</li>
+              <li>
+                T3 receives the approved scope, repository instructions, and
+                validation expectations.
+              </li>
+              <li>
+                The job retains thread IDs, run IDs, branch, and workspace
+                binding.
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="row">
+          <span class="number">03</span>
+          <div>
+            <h3>Review and revise</h3>
+            <div class="path">
+              <span class="node">Diff + acceptance evidence</span
+              ><span class="arrow">→</span
+              ><span class="node">Fresh reviewer</span
+              ><span class="arrow">→</span
+              ><span class="node">Structured verdict</span>
+            </div>
+            <ul>
+              <li>
+                The reviewer receives the approved document and prior review
+                history.
+              </li>
+              <li>
+                A new review thread binds explicitly to the implementation
+                worktree.
+              </li>
+              <li>
+                Findings return to the implementation context for revision.
+              </li>
+              <li>
+                A passing result must have no findings or unmet acceptance
+                criteria.
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="row">
+          <span class="number">04</span>
+          <div>
+            <h3>Validate and publish</h3>
+            <div class="path">
+              <span class="node">Reviewed tree</span><span class="arrow">→</span
+              ><span class="node">Required checks</span
+              ><span class="arrow">→</span
+              ><span class="node">Commit + push</span
+              ><span class="arrow">→</span><span class="node">Draft PR</span>
+            </div>
+            <ul>
+              <li>
+                Validation results record the command, exit code, and candidate
+                tree.
+              </li>
+              <li>
+                The PR description includes scope, acceptance evidence, review,
+                and validation.
+              </li>
+              <li>
+                flow saves the PR URL and links it to the implementation thread.
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div class="subsection">
+          <h3>Storage and ownership</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Location</th>
+                  <th scope="col">Contents</th>
+                  <th scope="col">Sharing</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>features/*.md</code></td>
+                  <td>
+                    Stable IDs, human status, groups, dependencies, and scope.
+                  </td>
+                  <td>Tracked in Git.</td>
+                </tr>
+                <tr>
+                  <td><code>flow.config.json</code></td>
+                  <td>
+                    T3 connection settings, validation commands, base branch,
+                    and revision limit.
+                  </td>
+                  <td>Tracked in Git. No secrets.</td>
+                </tr>
+                <tr>
+                  <td><code>.flow/state.sqlite</code></td>
+                  <td>
+                    Approvals, request snapshots, execution history, results,
+                    and publication progress.
+                  </td>
+                  <td>Local and gitignored.</td>
+                </tr>
+                <tr>
+                  <td>T3 + Git worktree</td>
+                  <td>
+                    Agent conversations, questions, implementation files, and
+                    commits.
+                  </td>
+                  <td>Managed by T3 and Git.</td>
+                </tr>
+                <tr>
+                  <td>OAuth proxy + T3</td>
+                  <td>
+                    OAuth credentials and provider authentication. Drafting CLIs
+                    manage their own credentials.
+                  </td>
+                  <td>Outside feature documents and exports.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="subsection">
+          <h3>Roadmap export</h3>
+          <div class="path">
+            <span class="node">Features</span><span class="arrow">+</span
+            ><span class="node">Job summaries</span><span class="arrow">+</span
+            ><span class="node">GitHub status</span><span class="arrow">→</span
+            ><span class="node">Versioned JSON</span>
+          </div>
+          <pre><code>flow export --json &gt; roadmap.json</code></pre>
+          <div class="grid">
+            <div class="card">
+              <h3>Included</h3>
+              <ul>
+                <li>IDs, titles, groups, and dependencies.</li>
+                <li>Approval match and execution state.</li>
+                <li>Dependency blockers and delivery state.</li>
+                <li>Review summaries, validation summaries, and links.</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>Excluded</h3>
+              <ul>
+                <li>Credentials and configuration.</li>
+                <li>Raw logs and document bodies.</li>
+                <li>Absolute worktree paths.</li>
+                <li>Graph coordinates, colors, and display state.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="note">
+            Future graph model: features become nodes, dependencies become
+            directed edges, and groups become initiatives. A group does not
+            create a dependency.
+          </div>
+        </div>
+      </section>
+
+      <section id="workflow" role="tabpanel" aria-labelledby="tab-workflow">
+        <h2>A stage passes only with evidence.</h2>
+        <p class="section-intro">
+          Select a stage to inspect its input, required checks, and saved
+          output. An agent's completed turn alone cannot advance the job.
+        </p>
+        <div class="workflow">
+          <div class="steps" role="group" aria-label="Workflow stages">
+            <button
+              class="step"
+              data-stage="0"
+              aria-pressed="true"
+              aria-controls="stage-detail"
+            >
+              <span>01</span>preparing
+            </button>
+            <button
+              class="step"
+              data-stage="1"
+              aria-pressed="false"
+              aria-controls="stage-detail"
+            >
+              <span>02</span>implementing
+            </button>
+            <button
+              class="step"
+              data-stage="2"
+              aria-pressed="false"
+              aria-controls="stage-detail"
+            >
+              <span>03</span>reviewing
+            </button>
+            <button
+              class="step"
+              data-stage="3"
+              aria-pressed="false"
+              aria-controls="stage-detail"
+            >
+              <span>04</span>revising
+            </button>
+            <button
+              class="step"
+              data-stage="4"
+              aria-pressed="false"
+              aria-controls="stage-detail"
+            >
+              <span>05</span>validating
+            </button>
+            <button
+              class="step"
+              data-stage="5"
+              aria-pressed="false"
+              aria-controls="stage-detail"
+            >
+              <span>06</span>publishing
+            </button>
+            <button
+              class="step"
+              data-stage="6"
+              aria-pressed="false"
+              aria-controls="stage-detail"
+            >
+              <span>07</span>pr_open
+            </button>
+          </div>
+          <article
+            id="stage-detail"
+            class="detail"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <div class="eyebrow">01 · Scope and eligibility</div>
+            <h3>preparing</h3>
+            <p>Check approval and dependencies before implementation starts.</p>
+            <h4>Required checks</h4>
+            <ul>
+              <li>The approval matches the current document.</li>
+              <li>Prerequisite PRs are confirmed merged.</li>
+              <li>Validation commands exist.</li>
+              <li>No other feature is executing.</li>
+            </ul>
+            <h4>Saved output</h4>
+            <p>
+              Job ID, approved snapshot and hash, configuration, base commit,
+              and unique branch.
+            </p>
+          </article>
+        </div>
+        <div class="print-stages">
+          <ol>
+            <li>
+              Prepare: verify approval, dependencies, and the repository claim.
+            </li>
+            <li>
+              Implement: collect acceptance evidence in the dedicated worktree.
+            </li>
+            <li>
+              Review: require a fresh thread and a valid structured result.
+            </li>
+            <li>Revise: address findings, then request a fresh review.</li>
+            <li>Validate: run required commands against the final tree.</li>
+            <li>Publish: commit, push, and create or recover the draft PR.</li>
+            <li>PR open: wait for external review and merge.</li>
+          </ol>
+        </div>
+        <div class="cycle">
+          <strong>Revision loop:</strong> reviewing → changes required →
+          revising → fresh reviewing. Default limit: two automatic revision
+          rounds.
+        </div>
+        <div class="note warning">
+          <strong>Changed candidate?</strong> A review or validation pass
+          applies to a specific Git tree. Further changes require a fresh review
+          and validation.
+        </div>
+        <div class="subsection">
+          <h3>Human intent, execution, and delivery stay separate.</h3>
+          <div class="grid">
+            <div class="card">
+              <h3>Document status</h3>
+              <div class="outcomes">
+                <code>draft</code><code>ready</code><code>cancelled</code>
+              </div>
+              <p>
+                Set by the person. Any document byte change invalidates approval
+                for a new run. An active job keeps its saved scope.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Job outcome</h3>
+              <div class="outcomes">
+                <code>active</code><code>needs_input</code><code>failed</code
+                ><code>cancelled</code>
+              </div>
+              <p>
+                Stored beside the execution stage. A blocked or failed job
+                retains the stage needed for recovery.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="subsection">
+          <h3>Dependency eligibility</h3>
+          <div class="path">
+            <span class="node">Feature A: PR merged</span
+            ><span class="arrow">→</span
+            ><span class="node">Feature B: dependency satisfied</span>
+          </div>
+          <ul>
+            <li>An open PR does not satisfy a dependency.</li>
+            <li>An unknown PR state blocks execution.</li>
+            <li>
+              Other approval and execution checks still apply to Feature B.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="recovery" role="tabpanel" aria-labelledby="tab-recovery">
+        <h2>Resume from recorded facts.</h2>
+        <p class="section-intro">
+          flow records operation intent before launch or publication. Recovery
+          checks backend and Git state before it decides what to do next.
+        </p>
+        <div class="grid">
+          <div class="card">
+            <div class="eyebrow">Durability</div>
+            <h3>Keep progress across CLI exits</h3>
+            <ul>
+              <li>
+                SQLite uses write-ahead logging and full synchronous writes.
+              </li>
+              <li>A process claim prevents concurrent flow runners.</li>
+              <li>Claims from dead local processes can be reclaimed.</li>
+              <li>Worktrees and user files remain in place.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="eyebrow">Control</div>
+            <h3>Keep uncertain operations visible</h3>
+            <ul>
+              <li>Retain launch titles and thread/run IDs.</li>
+              <li>Mark validation commands that are in progress.</li>
+              <li>Check commits, remote branches, and existing PRs.</li>
+              <li>Ask for human input when the outcome is unknown.</li>
+            </ul>
+          </div>
+        </div>
+        <details open>
+          <summary>A local drafting call stops or fails</summary>
+          <ol>
+            <li>
+              Use <code>flow new --id &lt;id&gt;</code> to collect saved
+              successful output.
+            </li>
+            <li>
+              If no successful result exists, confirm the local agent has
+              stopped.
+            </li>
+            <li>
+              Use <code>flow new --id &lt;id&gt; --retry-draft</code> to try
+              again.
+            </li>
+            <li>
+              Add <code>--provider codex</code> or
+              <code>--provider claude</code> to change providers.
+            </li>
+          </ol>
+          <p>
+            flow retains the input and attempt history. Drafting does not
+            connect to T3.
+          </p>
+        </details>
+        <details open>
+          <summary>A T3 launch response is missing</summary>
+          <ol>
+            <li>flow searches for the saved unique thread title.</li>
+            <li>If exactly one thread matches, flow adopts its handle.</li>
+            <li>If the result is uncertain, inspect T3.</li>
+            <li>
+              Only after confirming no thread exists, use
+              <code>resume --retry-launch</code>.
+            </li>
+          </ol>
+        </details>
+        <details open>
+          <summary>A review fails or the revision limit is reached</summary>
+          <ol>
+            <li>Read the findings in the review thread.</li>
+            <li>Resolve the issues in the implementation worktree.</li>
+            <li>
+              Use <code>resume --recheck</code> for a new independent review and
+              validation.
+            </li>
+          </ol>
+          <p>This command does not reset the automatic revision limit.</p>
+        </details>
+        <details open>
+          <summary>Validation stops before flow records completion</summary>
+          <ol>
+            <li>Confirm that its subprocesses have stopped.</li>
+            <li>Use <code>resume --retry-validation</code>.</li>
+            <li>Add <code>--recheck</code> if files changed.</li>
+          </ol>
+        </details>
+        <details open>
+          <summary>A PR creation response is missing</summary>
+          <ol>
+            <li>flow checks the branch and existing PRs.</li>
+            <li>If a matching PR exists, flow records its URL.</li>
+            <li>
+              If none is visible, inspect GitHub before using
+              <code>resume --retry-publish</code>.
+            </li>
+          </ol>
+          <p>
+            flow does not force-push or silently overwrite a mismatched remote
+            branch.
+          </p>
+        </details>
+        <details>
+          <summary>
+            A thread asks a question, or a job must be cancelled
+          </summary>
+          <ol>
+            <li>Open the supplied T3 thread link.</li>
+            <li>
+              Answer the question or approval request, then use
+              <code>flow resume &lt;id&gt;</code>.
+            </li>
+            <li>For cancellation, stop active T3 threads first.</li>
+            <li>
+              Resolve uncertain operations, then use
+              <code>flow cancel &lt;id&gt;</code>.
+            </li>
+          </ol>
+        </details>
+        <div class="note warning">
+          <strong>Preserve the recovery records.</strong> Do not delete
+          <code>.flow/</code> to restart a job. Do not share it between hosts.
+        </div>
+        <div class="subsection">
+          <h3>Verification boundary</h3>
+          <div class="grid">
+            <div class="card">
+              <h3>Verified</h3>
+              <ul>
+                <li>Deterministic workflow tests with fake execution.</li>
+                <li>
+                  Real Git commits and pushes to a disposable local remote.
+                </li>
+                <li>Lost-response recovery without duplicate publication.</li>
+                <li>
+                  Live T3 worktree creation and independent reviewer binding.
+                </li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>Not yet verified end to end</h3>
+              <ul>
+                <li>External T3 OAuth login through flow.</li>
+                <li>Live Claude drafting; the local CLI is not signed in.</li>
+                <li>
+                  A complete production run that creates a real GitHub PR.
+                </li>
+              </ul>
+              <p>No real PRs were created during implementation testing.</p>
+            </div>
+          </div>
+          <p class="section-intro">
+            Agents and repository scripts must be trusted. Read-only review
+            instructions are not an operating-system sandbox. Avoid concurrent
+            manual worktree edits.
+          </p>
+        </div>
+      </section>
+      <footer>
+        <span>flow v0 · Architecture reference · No live repository data</span
+        ><span
+          >Self-contained HTML · Works offline · Print all sections with your
+          browser</span
+        >
+      </footer>
+    </main>
+    <script>
+      (() => {
+        const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+        const panels = Array.from(
+          document.querySelectorAll('[role="tabpanel"]'),
+        );
+        const selectTab = (tab, focus = false) => {
+          tabs.forEach((t) => {
+            const active = t === tab;
+            t.setAttribute("aria-selected", String(active));
+            t.tabIndex = active ? 0 : -1;
+          });
+          panels.forEach((p) => {
+            p.hidden = p.id !== tab.getAttribute("aria-controls");
+          });
+          if (focus) tab.focus();
+        };
+        tabs.forEach((tab, index) => {
+          tab.addEventListener("click", () => selectTab(tab));
+          tab.addEventListener("keydown", (event) => {
+            let next;
+            if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+            if (event.key === "ArrowLeft")
+              next = (index + tabs.length - 1) % tabs.length;
+            if (event.key === "Home") next = 0;
+            if (event.key === "End") next = tabs.length - 1;
+            if (next !== undefined) {
+              event.preventDefault();
+              selectTab(tabs[next], true);
+            }
+          });
+        });
+        selectTab(tabs[0]);
+        const stages = [
+          {
+            label: "Scope and eligibility",
+            name: "preparing",
+            intro:
+              "Check approval and dependencies before implementation starts.",
+            checks: [
+              "The approval matches the current document.",
+              "Prerequisite PRs are confirmed merged.",
+              "Validation commands exist.",
+              "No other feature is executing.",
+            ],
+            output:
+              "Job ID, approved snapshot and hash, configuration, base commit, and unique branch.",
+          },
+          {
+            label: "Implementation context",
+            name: "implementing",
+            intro:
+              "T3 runs the implementation agent in its dedicated worktree.",
+            checks: [
+              "The thread is bound to the correct repository and branch.",
+              "JSON evidence covers every acceptance criterion.",
+              "The implementation produces a diff.",
+              "PR creation is not authorized in this stage.",
+            ],
+            output:
+              "Implementation thread and run IDs, workspace, acceptance evidence, and candidate Git tree.",
+          },
+          {
+            label: "Independent assessment",
+            name: "reviewing",
+            intro:
+              "A fresh reviewer examines the candidate in the explicitly bound implementation worktree.",
+            checks: [
+              "The reviewer uses a separate conversation.",
+              "The structured verdict is valid.",
+              "A pass has no findings or unmet acceptance criteria.",
+              "The candidate does not change during review.",
+            ],
+            output:
+              "Review thread, candidate tree, verdict, findings, and unmet acceptance criteria.",
+          },
+          {
+            label: "Bounded correction",
+            name: "revising",
+            intro:
+              "Send actionable findings back to the implementation context.",
+            checks: [
+              "The automatic revision limit permits another round.",
+              "The agent provides responses to the findings.",
+              "The updated result includes acceptance evidence.",
+              "A fresh reviewer receives the previous findings and responses.",
+            ],
+            output:
+              "Revision count, updated implementation handle, responses, and new candidate tree.",
+          },
+          {
+            label: "Required repository checks",
+            name: "validating",
+            intro:
+              "Run each configured command directly in the final implementation worktree.",
+            checks: [
+              "Required validation commands are configured.",
+              "Each required command succeeds.",
+              "Results apply to the reviewed candidate tree.",
+              "File changes trigger fresh review and validation.",
+            ],
+            output:
+              "Command arrays, exit codes, logs, and the validated candidate tree.",
+          },
+          {
+            label: "Resumable publication",
+            name: "publishing",
+            intro:
+              "Commit and push the approved candidate, then create one draft PR.",
+            checks: [
+              "Review and validation pass for the final candidate.",
+              "Agent threads have not changed since review.",
+              "The commit and remote branch match the expected candidate.",
+              "Existing PRs are checked before a creation retry.",
+            ],
+            output:
+              "Commit ID, push progress, draft PR URL, and T3 link status.",
+          },
+          {
+            label: "PR created",
+            name: "pr_open",
+            intro:
+              "The draft PR is available for external review. flow does not merge it.",
+            checks: [
+              "The PR URL is saved.",
+              "The PR is linked to the implementation thread when supported.",
+              "A dependency is satisfied only after a confirmed merge.",
+            ],
+            output:
+              "A published PR and recorded execution history. Delivery status is refreshed from GitHub.",
+          },
+        ];
+        const detail = document.getElementById("stage-detail");
+        const buttons = Array.from(document.querySelectorAll("[data-stage]"));
+        const renderStage = (index) => {
+          const stage = stages[index];
+          buttons.forEach((b, i) =>
+            b.setAttribute("aria-pressed", String(i === index)),
+          );
+          detail.replaceChildren();
+          const add = (tag, text, className) => {
+            const el = document.createElement(tag);
+            el.textContent = text;
+            if (className) el.className = className;
+            detail.append(el);
+            return el;
+          };
+          add(
+            "div",
+            String(index + 1).padStart(2, "0") + " · " + stage.label,
+            "eyebrow",
+          );
+          add("h3", stage.name);
+          add("p", stage.intro);
+          add("h4", "Required checks");
+          const list = add("ul", "");
+          stage.checks.forEach((text) => {
+            const li = document.createElement("li");
+            li.textContent = text;
+            list.append(li);
+          });
+          add("h4", "Saved output");
+          add("p", stage.output);
+        };
+        buttons.forEach((b) =>
+          b.addEventListener("click", () =>
+            renderStage(Number(b.dataset.stage)),
+          ),
+        );
+        // Local, read-only smoke checks. No network calls or repository access.
+        const issues = [];
+        tabs.forEach((tab) => {
+          selectTab(tab);
+          if (
+            document.querySelectorAll('[role="tabpanel"]:not([hidden])')
+              .length !== 1
+          )
+            issues.push("Tab visibility");
+        });
+        stages.forEach((stage, index) => {
+          renderStage(index);
+          if (detail.querySelector("h3").textContent !== stage.name)
+            issues.push("Stage content");
+        });
+        renderStage(0);
+        selectTab(tabs[0]);
+        if (issues.length) console.error("Overview checks failed:", issues);
+        else
+          console.log(
+            "Overview checks passed: 4 panels, 7 workflow stages, no external dependencies.",
+          );
+      })();
+    </script>
+  </body>
+</html>
